@@ -1,0 +1,119 @@
+---
+title: "KM IC injection MODAG001"
+author: "NRR/PPS"
+date: "01/01/2022"
+output: 
+ html_document:
+  toc: true 
+  toc_float: true 
+  toc_depth: 3
+  
+---
+```{r setup,include=FALSE}
+library(kinfitr)
+library(mgcv) 
+library(granviller) 
+library(tidyverse)
+
+#Load raw data from GitHub 
+rawdata_url <- ("https://github.com/nakulrrraval/Protein_inj_pig_model_MODAG001/raw/main/alldat_raw.RDS")
+alldat <- readRDS(url(rawdata_url, method="libcurl"))
+
+```
+
+```{r srtm}
+
+#Split dataframe and add occipital cortex to every 'tac' as a reference region
+alldatref_srtm <- alldat %>%
+  select(Subjname, tacs) %>%
+  unnest() %>%
+  select(c( Subjname, Times, Weights, 
+            left.inj,
+            right.inj,
+            Temporal.cx,
+            Cerebellum,
+            Occipital.cx)) %>%
+  gather(Region, TAC, -c(Subjname, Times, Weights, Occipital.cx)) %>%
+  group_by(Subjname, Region) %>%
+  nest(.key = 'tacs')
+
+
+srtm_fit <- function(tacs)
+  {
+  
+ kinfitr::srtm(t_tac = tacs$Times, 
+                reftac = tacs$Occipital.cx,
+                roitac = tacs$TAC,
+                weights = tacs$Weights)
+}
+
+alldatref_srtm <- alldatref_srtm %>% 
+  filter(Subjname == 'modag001_p270' & Region == 'left.inj'| 
+         Subjname == 'modag002_p269' & Region == 'left.inj'| 
+         Subjname == 'modag003_p329' & Region == 'left.inj'|
+         Subjname == 'modag004_p329' & Region == 'left.inj'|
+         Subjname == 'modag005_p434' & Region == 'right.inj') %>%
+  
+  mutate(srtm.fit = map(.x = tacs, .f = srtm_fit))%>%
+  
+  mutate(BP.srtm = map_dbl(srtm.fit, c("par", "bp"))) %>%
+  
+  mutate(k2.srtm = map_dbl(srtm.fit, c("par", "k2"))) %>%
+  
+  mutate(R1.srtm = map_dbl(srtm.fit, c("par", "R1"))) %>%
+  
+   mutate(k2.prime.srtm = k2.srtm/R1.srtm)
+
+```
+
+```{r, eval=FALSE}
+#find t* for Ref Logan with Occipital cortex fixed k2prime
+
+for(s in 1:length(Subjname))
+  
+{
+  kinfitr::refLogan_tstar(t_tac = alldat$tacs[[s]]$Times,
+                                   reftac = alldat$tacs[[s]]$Occipital.cx,
+                                   lowroi = alldat$tacs[[s]]$Temporal.cx,
+                                   medroi = alldat$tacs[[s]]$right.inj,
+                                   highroi = alldat$tacs[[s]]$left.inj,
+                                   k2prime = 0.09) #Calculated using SRTM1
+}
+
+```
+
+
+```{r ref logan}
+  
+alldatref_Logan <- alldat %>%
+  select(Subjname, tacs) %>%
+  unnest() %>%
+  select(c( Subjname, Times, Weights, 
+            Occipital.cx,
+            left.inj,
+            right.inj,
+            Temporal.cx,
+            Cerebellum)) %>%
+  gather(Region, TAC, -c(Subjname, Times, Weights, Occipital.cx)) %>%
+  group_by(Subjname, Region) %>%
+  nest(.key = 'tacs')
+
+
+refLogan_fit <- function(tacs){
+  
+ kinfitr::refLogan(t_tac = tacs$Times, 
+                          reftac = tacs$Occipital.cx,
+                          roitac = tacs$TAC,
+                          tstarIncludedFrames = 15, #Decided using the chunk of code above
+                          k2prime = 0.09, #Calculated using SRTM1
+                          weights = tacs$Weights)
+ 
+}
+
+alldatref_Logan <- alldatref_Logan %>%
+  mutate(Logan.fit = map(.x = tacs,.f = refLogan_fit)) %>%
+  
+  mutate(BP.Logan = map_dbl(Logan.fit, c("par", "bp")))
+
+```
+
